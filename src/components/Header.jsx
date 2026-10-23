@@ -3,7 +3,7 @@ import { useMandal } from '../context/MandalContext';
 import { Shield, ShieldCheck, Landmark, LayoutDashboard, Users, Settings } from 'lucide-react';
 
 export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
-  const { society, isAdmin, lockAdmin, members, currentView, setCurrentView } = useMandal();
+  const { society, isAdmin, lockAdmin, members, currentView, setCurrentView, isCloudConnected } = useMandal();
 
   const treasury = society?.treasury || { bankBalance: 0, cashBalance: 0, totalReserve: 0 };
 
@@ -27,7 +27,27 @@ export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Cloud Live Sync Indicator */}
+          <div 
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              background: isCloudConnected ? 'rgba(22, 101, 52, 0.45)' : 'rgba(255,255,255,0.15)',
+              border: isCloudConnected ? '1px solid rgba(74, 222, 128, 0.6)' : '1px solid rgba(255,255,255,0.25)',
+              color: isCloudConnected ? '#DCFCE7' : 'rgba(255,255,255,0.85)',
+              borderRadius: '999px',
+              padding: '4px 10px',
+              fontSize: '11px',
+              fontWeight: 700
+            }}
+            title={isCloudConnected ? "Connected to Google Firebase Firestore - Live Multi-Device Sync Active" : "Local Storage Mode"}
+          >
+            <span style={{ fontSize: '8px' }}>{isCloudConnected ? '🟢' : '🟠'}</span>
+            <span>{isCloudConnected ? 'Cloud Live' : 'Local'}</span>
+          </div>
+
           {/* Society Settings Button for Admin */}
           {isAdmin && (
             <button

@@ -10,26 +10,22 @@ import {
 const STORAGE_CONFIG_KEY = 'shakti_mandal_firebase_config';
 const DEFAULT_SOCIETY_DOC = 'shakti-yuvak-mandal';
 
+export const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBOPHjwr9sWR-LR4-chf6kclb23bwR1rP4",
+  authDomain: "shakti-mandal.firebaseapp.com",
+  projectId: "shakti-mandal",
+  storageBucket: "shakti-mandal.firebasestorage.app",
+  messagingSenderId: "928679043566",
+  appId: "1:928679043566:web:92607d8aa90fbc0615aeff",
+  measurementId: "G-4ZCQHGB7TE"
+};
+
 /**
- * Reads Firebase configuration from environment variables or localStorage
+ * Reads Firebase configuration from localStorage, environment variables, or defaults
  */
 export function getSavedFirebaseConfig() {
   try {
-    // 1. Check Vite env variables first (standard for Vercel/Netlify production deployment)
-    const envConfig = {
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID
-    };
-
-    if (envConfig.apiKey && envConfig.projectId) {
-      return envConfig;
-    }
-
-    // 2. Fallback to localStorage configuration (allows admin to paste directly in UI without rebuilding)
+    // 1. Check custom localStorage configuration
     const saved = localStorage.getItem(STORAGE_CONFIG_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
@@ -37,10 +33,25 @@ export function getSavedFirebaseConfig() {
         return parsed;
       }
     }
+
+    // 2. Check Vite env variables if set
+    if (import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+      return {
+        apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+        authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_FIREBASE_CONFIG.authDomain,
+        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_CONFIG.projectId,
+        storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || DEFAULT_FIREBASE_CONFIG.storageBucket,
+        messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+        appId: import.meta.env.VITE_FIREBASE_APP_ID || DEFAULT_FIREBASE_CONFIG.appId
+      };
+    }
+
+    // 3. Live Production Cloud Database configuration
+    return DEFAULT_FIREBASE_CONFIG;
   } catch (e) {
     console.error('Error reading firebase config', e);
   }
-  return null;
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 export function saveFirebaseConfig(config) {
