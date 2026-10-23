@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { CLEAN_DATA, DEMO_DATA } from '../data/initialData';
 import confetti from 'canvas-confetti';
 import { 
@@ -51,22 +51,29 @@ export function MandalProvider({ children }) {
   const [isCloudConnected, setIsCloudConnected] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'synced' | 'error'
 
+  const isInitialCloudLoaded = useRef(!getSavedFirebaseConfig());
+  const isRemoteSync = useRef(false);
+
   // 1. Cloud Firestore Real-time Synchronization Listener
   useEffect(() => {
     const config = getSavedFirebaseConfig();
     if (!config) {
       setIsCloudConnected(false);
+      isInitialCloudLoaded.current = true;
       return;
     }
 
     const unsubscribe = subscribeToCloudSociety(
       'shakti-yuvak-mandal',
       (cloudData) => {
-        if (cloudData) {
+        if (cloudData && typeof cloudData === 'object') {
+          isRemoteSync.current = true;
           setData(cloudData);
           setIsCloudConnected(true);
+          isInitialCloudLoaded.current = true;
         } else {
           // Cloud doc empty, seed with current local data
+          isInitialCloudLoaded.current = true;
           syncToCloudSociety('shakti-yuvak-mandal', data)
             .then(() => setIsCloudConnected(true))
             .catch((e) => console.warn('Cloud seed error:', e));
@@ -75,6 +82,7 @@ export function MandalProvider({ children }) {
       (err) => {
         console.warn('Firestore subscription offline or error:', err);
         setIsCloudConnected(false);
+        isInitialCloudLoaded.current = true;
       }
     );
 
@@ -89,6 +97,17 @@ export function MandalProvider({ children }) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.error('Failed to save to localStorage', e);
+    }
+
+    // Do not echo remote updates received from Firestore back to Firestore
+    if (isRemoteSync.current) {
+      isRemoteSync.current = false;
+      return;
+    }
+
+    // Do not sync until initial cloud load has completed
+    if (!isInitialCloudLoaded.current) {
+      return;
     }
 
     const config = getSavedFirebaseConfig();
