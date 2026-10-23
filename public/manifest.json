@@ -1,0 +1,23 @@
+{
+  "short_name": "Shakti Mandal",
+  "name": "Shakti Yuvak Mandal - Society Accounts",
+  "description": "Transparent Festival & Treasury Management System for Shakti Yuvak Mandal",
+  "icons": [
+    {
+      "src": "/mandal-logo.jpg",
+      "type": "image/jpeg",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/mandal-logo.jpg",
+      "type": "image/jpeg",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#FFFDF9",
+  "theme_color": "#E65100",
+  "display": "standalone",
+  "orientation": "portrait"
+}
