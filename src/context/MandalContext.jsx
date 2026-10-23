@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CLEAN_DATA, DEMO_DATA } from '../data/initialData';
 import confetti from 'canvas-confetti';
+import { 
+  getSavedFirebaseConfig, 
+  saveFirebaseConfig, 
+  clearFirebaseConfig, 
+  subscribeToCloudSociety, 
+  syncToCloudSociety 
+} from '../services/firebase';
 
 const MandalContext = createContext();
 
@@ -40,14 +47,78 @@ export function MandalProvider({ children }) {
 
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Save changes to localStorage
+  // Cloud Database state
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'synced' | 'error'
+
+  // 1. Cloud Firestore Real-time Synchronization Listener
+  useEffect(() => {
+    const config = getSavedFirebaseConfig();
+    if (!config) {
+      setIsCloudConnected(false);
+      return;
+    }
+
+    const unsubscribe = subscribeToCloudSociety(
+      'shakti-yuvak-mandal',
+      (cloudData) => {
+        if (cloudData) {
+          setData(cloudData);
+          setIsCloudConnected(true);
+        } else {
+          // Cloud doc empty, seed with current local data
+          syncToCloudSociety('shakti-yuvak-mandal', data)
+            .then(() => setIsCloudConnected(true))
+            .catch((e) => console.warn('Cloud seed error:', e));
+        }
+      },
+      (err) => {
+        console.warn('Firestore subscription offline or error:', err);
+        setIsCloudConnected(false);
+      }
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  // 2. Save changes to localStorage AND Cloud Firestore (if configured)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.error('Failed to save to localStorage', e);
     }
+
+    const config = getSavedFirebaseConfig();
+    if (config) {
+      setCloudSyncStatus('syncing');
+      syncToCloudSociety('shakti-yuvak-mandal', data)
+        .then(() => setCloudSyncStatus('synced'))
+        .catch(() => setCloudSyncStatus('error'));
+    }
   }, [data]);
+
+  const connectCloudDatabase = (config) => {
+    saveFirebaseConfig(config);
+    setCloudSyncStatus('syncing');
+    syncToCloudSociety('shakti-yuvak-mandal', data)
+      .then(() => {
+        setIsCloudConnected(true);
+        setCloudSyncStatus('synced');
+      })
+      .catch((err) => {
+        console.error('Cloud connect error:', err);
+        setCloudSyncStatus('error');
+      });
+  };
+
+  const disconnectCloudDatabase = () => {
+    clearFirebaseConfig();
+    setIsCloudConnected(false);
+    setCloudSyncStatus('idle');
+  };
 
   // Keep selectedEventId valid if events list changes
   useEffect(() => {
@@ -740,7 +811,11 @@ export function MandalProvider({ children }) {
         resetToCleanData,
         loadSampleDemoData,
         generateWhatsAppSummary,
-        getMemberWhatsAppReminderUrl
+        getMemberWhatsAppReminderUrl,
+        isCloudConnected,
+        cloudSyncStatus,
+        connectCloudDatabase,
+        disconnectCloudDatabase
       }}
     >
       {children}
