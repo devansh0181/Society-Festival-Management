@@ -221,36 +221,48 @@ export default function EventDetailView({
         <button
           id="event-tab-btn-overview"
           className={`tab-btn ${eventTab === 'overview' ? 'active' : ''}`}
-          onClick={() => setEventTab('overview')}
+          onClick={(e) => {
+            setEventTab('overview');
+            e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }}
         >
-          <BarChart2 size={14} style={{ marginRight: '4px' }} />
+          <BarChart2 size={14} style={{ flexShrink: 0 }} />
           <span>Charts & Overview</span>
         </button>
 
         <button
           id="event-tab-btn-contributors"
           className={`tab-btn ${eventTab === 'contributors' ? 'active' : ''}`}
-          onClick={() => setEventTab('contributors')}
+          onClick={(e) => {
+            setEventTab('contributors');
+            e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }}
         >
-          <span style={{ marginRight: '4px' }}>🙏</span>
+          <span style={{ flexShrink: 0 }}>🙏</span>
           <span>Contributors ({stats.count})</span>
         </button>
 
         <button
           id="event-tab-btn-defaulters"
           className={`tab-btn ${eventTab === 'defaulters' ? 'active' : ''}`}
-          onClick={() => setEventTab('defaulters')}
+          onClick={(e) => {
+            setEventTab('defaulters');
+            e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }}
         >
-          <span style={{ marginRight: '4px' }}>⏳</span>
+          <span style={{ flexShrink: 0 }}>⏳</span>
           <span>Pending ({stats.pending})</span>
         </button>
 
         <button
           id="event-tab-btn-expenses"
           className={`tab-btn ${eventTab === 'expenses' ? 'active' : ''}`}
-          onClick={() => setEventTab('expenses')}
+          onClick={(e) => {
+            setEventTab('expenses');
+            e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }}
         >
-          <Receipt size={14} style={{ marginRight: '4px' }} />
+          <Receipt size={14} style={{ flexShrink: 0 }} />
           <span>Bills / Expenses ({(selectedEvent.expenses || []).length})</span>
         </button>
       </div>

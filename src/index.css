@@ -444,21 +444,29 @@ body {
 /* Tab Navigation Strip */
 .tab-nav {
   display: flex;
+  align-items: center;
   border-bottom: 2px solid var(--border-light);
   margin-bottom: 18px;
-  gap: 4px;
+  gap: 8px;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  white-space: nowrap;
+  padding-bottom: 2px;
 }
 .tab-nav::-webkit-scrollbar {
   display: none;
 }
 
 .tab-btn {
-  flex: 1;
-  min-width: 90px;
-  padding: 10px 8px;
-  text-align: center;
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: none;
   border: none;
   font-size: 13px;
@@ -468,10 +476,17 @@ body {
   position: relative;
   transition: all 0.2s ease;
   white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.tab-btn:hover {
+  color: var(--saffron-800);
 }
 
 .tab-btn.active {
   color: var(--saffron-900);
+  font-weight: 700;
 }
 
 .tab-btn.active::after {
@@ -483,6 +498,13 @@ body {
   height: 3px;
   background: var(--saffron-900);
   border-radius: 3px 3px 0 0;
+}
+
+@media (min-width: 640px) {
+  .tab-btn {
+    flex: 1 1 0%;
+    padding: 10px 16px;
+  }
 }
 
 /* Member Contribution List (Praise in Public) */
