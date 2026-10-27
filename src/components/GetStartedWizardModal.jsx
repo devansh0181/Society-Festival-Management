@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { useMandal } from '../context/MandalContext';
-import { Sparkles, Building, Landmark, Users, Calendar, ArrowRight, ArrowLeft, CheckCircle2, X, PlusCircle } from 'lucide-react';
+import { Sparkles, Building, Landmark, Users, Calendar, ArrowRight, ArrowLeft, CheckCircle2, X, PlusCircle, Lock } from 'lucide-react';
 
 export default function GetStartedWizardModal({ isOpen, onClose }) {
-  const { society, updateSociety, addMember, createNewEvent } = useMandal();
+  const { society, updateSociety, addMember, createNewEvent, isAdmin } = useMandal();
 
   const [step, setStep] = useState(1);
 
   // Step 1: Society Details
-  const [societyName, setSocietyName] = useState(society.name || 'Shakti Yuvak Mandal');
+  const [societyName, setSocietyName] = useState(society.name || 'My Residential Society');
   const [subtitle, setSubtitle] = useState(society.subtitle || 'Residential Society');
   const [upiId, setUpiId] = useState(society.upiId || 'society@upi');
 
@@ -32,19 +32,46 @@ export default function GetStartedWizardModal({ isOpen, onClose }) {
 
   if (!isOpen) return null;
 
+  // Block non-admin from modifying wizard
+  if (!isAdmin) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px', textAlign: 'center', padding: '28px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#FEE2E2', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+            <Lock size={24} />
+          </div>
+          <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-dark)' }}>Admin Access Required</h3>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+            Only the society administrator can configure society setup. Please unlock Admin mode in the top header using your 4-digit PIN.
+          </p>
+          <button className="submit-btn" onClick={onClose} style={{ marginTop: '18px' }}>
+            Understood
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const totalCorpus = Number(bankBalance || 0) + Number(cashBalance || 0);
 
   const handleFinish = (e) => {
     e.preventDefault();
 
-    // 1. Update Society & Opening Treasury
+    // 1. Update Society & Opening Treasury and mark wizard as permanently completed
     updateSociety({
       name: societyName.trim() || 'My Residential Society',
       subtitle: subtitle.trim(),
       upiId: upiId.trim(),
       bankBalance: Number(bankBalance || 0),
-      cashBalance: Number(cashBalance || 0)
+      cashBalance: Number(cashBalance || 0),
+      wizardCompleted: true
     });
+
+    try {
+      if (society?.id) {
+        localStorage.setItem(`setup_wizard_done_${society.id}`, 'true');
+      }
+    } catch (_) {}
 
     // 2. Add Member ONLY if user explicitly typed a flat number and name
     if (firstFlat.trim() && firstName.trim()) {

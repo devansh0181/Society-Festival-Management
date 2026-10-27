@@ -43,7 +43,7 @@ export default function PwaBanner() {
     <div className="pwa-banner" id="pwa-install-banner">
       <div className="pwa-text">
         <Smartphone size={18} color="#D97706" />
-        <span>Install Mandal App on your phone home screen</span>
+        <span>Install Society App on your phone home screen</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
         <button 

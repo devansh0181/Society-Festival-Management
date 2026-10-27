@@ -1,9 +1,9 @@
 import React from 'react';
 import { useMandal } from '../context/MandalContext';
-import { Shield, ShieldCheck, Landmark, LayoutDashboard, Users, Settings } from 'lucide-react';
+import { Shield, ShieldCheck, Landmark, LayoutDashboard, Users, User, LogOut } from 'lucide-react';
 
-export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
-  const { society, isAdmin, lockAdmin, members, currentView, setCurrentView, isCloudConnected } = useMandal();
+export default function Header({ onOpenAdminModal, onOpenProfile, onOpenSocietySettings }) {
+  const { society, isAdmin, lockAdmin, members, currentView, setCurrentView, isCloudConnected, logout } = useMandal();
 
   const treasury = society?.treasury || { bankBalance: 0, cashBalance: 0, totalReserve: 0 };
 
@@ -13,14 +13,14 @@ export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
         <div className="mandal-brand" onClick={() => setCurrentView('dashboard')} style={{ cursor: 'pointer' }}>
           <img 
             src="/mandal-logo.jpg" 
-            alt="Shakti Yuvak Mandal Logo" 
+            alt="Society Logo" 
             className="mandal-avatar"
             onError={(e) => {
               e.target.style.display = 'none';
             }}
           />
           <div className="mandal-title-group">
-            <h1>{society?.name || 'Shakti Yuvak Mandal'}</h1>
+            <h1>{society?.name || 'Society Portal'}</h1>
             <div className="mandal-tagline">
               {society?.subtitle || 'Residential Society'} • {members.length} Flats
             </div>
@@ -42,35 +42,34 @@ export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
               fontSize: '11px',
               fontWeight: 700
             }}
-            title={isCloudConnected ? "Connected to Google Firebase Firestore - Live Multi-Device Sync Active" : "Local Storage Mode"}
+            title={isCloudConnected ? "Connected to Cloud Database - Live Multi-Device Sync Active" : "Local Storage Mode"}
           >
             <span style={{ fontSize: '8px' }}>{isCloudConnected ? '🟢' : '🟠'}</span>
             <span>{isCloudConnected ? 'Cloud Live' : 'Local'}</span>
           </div>
 
-          {/* Society Settings Button for Admin */}
-          {isAdmin && (
-            <button
-              id="header-society-settings-btn"
-              onClick={onOpenSocietySettings}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: '1px solid rgba(255,255,255,0.4)',
-                color: '#FFF',
-                borderRadius: '999px',
-                padding: '6px 10px',
-                fontSize: '11.5px',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-              title="Edit Society Name, Opening Money & UPI"
-            >
-              <Settings size={13} />
-              <span>Settings</span>
-            </button>
-          )}
+          {/* Society Profile Button */}
+          <button
+            id="header-society-profile-btn"
+            onClick={onOpenProfile || onOpenSocietySettings}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: '1px solid rgba(255,255,255,0.4)',
+              color: '#FFF',
+              borderRadius: '999px',
+              padding: '6px 12px',
+              fontSize: '11.5px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+            title="View & Edit Society Profile, Treasury & Contacts"
+          >
+            <User size={13} />
+            <span>Profile</span>
+          </button>
 
           {/* Admin Login/Lock Button */}
           {isAdmin ? (
@@ -94,6 +93,33 @@ export default function Header({ onOpenAdminModal, onOpenSocietySettings }) {
               <span>Admin Login</span>
             </button>
           )}
+
+          {/* Logout Button */}
+          <button
+            id="header-logout-btn"
+            onClick={() => {
+              if (window.confirm(`Log out of ${society?.name || 'society'}?`)) {
+                logout();
+              }
+            }}
+            style={{
+              background: 'rgba(0,0,0,0.25)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              color: 'rgba(255,255,255,0.9)',
+              borderRadius: '999px',
+              padding: '6px 10px',
+              fontSize: '11.5px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            title="Log out of this society"
+          >
+            <LogOut size={13} />
+            <span>Logout</span>
+          </button>
         </div>
       </div>
 

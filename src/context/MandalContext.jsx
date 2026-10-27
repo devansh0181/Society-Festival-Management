@@ -6,33 +6,57 @@ import {
   saveFirebaseConfig, 
   clearFirebaseConfig, 
   subscribeToCloudSociety, 
-  syncToCloudSociety 
+  syncToCloudSociety,
+  registerSocietyUser,
+  loginSocietyUser,
+  sendResetPasswordEmail,
+  verifyAccountForReset,
+  resetSocietyPasswordDirectly,
+  logoutSocietyUser,
+  getActiveAuthSession
 } from '../services/firebase';
 
 const MandalContext = createContext();
 
-const STORAGE_KEY = 'shakti_yuvak_mandal_v4';
+const getSocietyStorageKey = (socId) => {
+  if (!socId || socId === 'shakti-yuvak-mandal') return 'shakti_yuvak_mandal_v4';
+  return `shakti_society_data_${socId}`;
+};
+
+const loadInitialSocietyData = (socId, defaultName) => {
+  try {
+    const key = getSocietyStorageKey(socId);
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed.members)) parsed.members = [];
+      if (!Array.isArray(parsed.events)) parsed.events = [];
+      if (!parsed.society) parsed.society = { ...CLEAN_DATA.society, id: socId, name: defaultName || 'My Society' };
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Failed to load from storage', e);
+  }
+  return {
+    ...CLEAN_DATA,
+    society: {
+      ...CLEAN_DATA.society,
+      id: socId || 'society-1',
+      name: defaultName || (socId === 'shakti-yuvak-mandal' ? 'Shakti Yuvak Mandal' : 'My Society')
+    }
+  };
+};
 
 export function MandalProvider({ children }) {
-  const [data, setData] = useState(() => {
-    try {
-      // Clear legacy storage versions with dummy data or sample flats
-      localStorage.removeItem('shakti_yuvak_mandal_v1');
-      localStorage.removeItem('shakti_yuvak_mandal_v2');
-      localStorage.removeItem('shakti_yuvak_mandal_v3');
+  // Active Authenticated Society User Session
+  const [authSession, setAuthSession] = useState(() => getActiveAuthSession());
+  const currentSocietyId = authSession?.societyId || null;
+  const isAuthenticated = Boolean(authSession);
 
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (!Array.isArray(parsed.members)) parsed.members = [];
-        if (!Array.isArray(parsed.events)) parsed.events = [];
-        if (!parsed.society) parsed.society = CLEAN_DATA.society;
-        return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to load from localStorage', e);
-    }
-    return CLEAN_DATA;
+  const [data, setData] = useState(() => {
+    const initialSession = getActiveAuthSession();
+    if (!initialSession) return CLEAN_DATA;
+    return loadInitialSocietyData(initialSession.societyId, initialSession.societyName);
   });
 
   const [selectedEventId, setSelectedEventId] = useState(() => {
@@ -45,6 +69,7 @@ export function MandalProvider({ children }) {
   // Sub-tabs inside event view: 'overview' | 'contributors' | 'defaulters' | 'expenses'
   const [eventTab, setEventTab] = useState('overview');
 
+  // Normal members start in Public read-only view; Admin must enter PIN to make changes
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Cloud Database state
@@ -54,8 +79,14 @@ export function MandalProvider({ children }) {
   const isInitialCloudLoaded = useRef(!getSavedFirebaseConfig());
   const isRemoteSync = useRef(false);
 
-  // 1. Cloud Firestore Real-time Synchronization Listener
+  // 1. Cloud Firestore Real-time Multi-tenant Listener
   useEffect(() => {
+    if (!currentSocietyId) {
+      setIsCloudConnected(false);
+      isInitialCloudLoaded.current = true;
+      return;
+    }
+
     const config = getSavedFirebaseConfig();
     if (!config) {
       setIsCloudConnected(false);
@@ -63,24 +94,26 @@ export function MandalProvider({ children }) {
       return;
     }
 
+    isInitialCloudLoaded.current = false;
+
     const unsubscribe = subscribeToCloudSociety(
-      'shakti-yuvak-mandal',
+      currentSocietyId,
       (cloudData) => {
-        if (cloudData && typeof cloudData === 'object') {
+        if (cloudData && typeof cloudData === 'object' && cloudData.society) {
           isRemoteSync.current = true;
           setData(cloudData);
           setIsCloudConnected(true);
           isInitialCloudLoaded.current = true;
         } else {
-          // Cloud doc empty, seed with current local data
+          // Cloud doc empty for this new society, seed with current local data
           isInitialCloudLoaded.current = true;
-          syncToCloudSociety('shakti-yuvak-mandal', data)
+          syncToCloudSociety(currentSocietyId, data)
             .then(() => setIsCloudConnected(true))
             .catch((e) => console.warn('Cloud seed error:', e));
         }
       },
       (err) => {
-        console.warn('Firestore subscription offline or error:', err);
+        console.warn(`Firestore subscription notice for ${currentSocietyId}:`, err);
         setIsCloudConnected(false);
         isInitialCloudLoaded.current = true;
       }
@@ -89,23 +122,25 @@ export function MandalProvider({ children }) {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, []);
+  }, [currentSocietyId]);
 
-  // 2. Save changes to localStorage AND Cloud Firestore (if configured)
+  // 2. Save changes to local storage AND Cloud Firestore for the active society
   useEffect(() => {
+    if (!currentSocietyId) return;
+
+    const storageKey = getSocietyStorageKey(currentSocietyId);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(storageKey, JSON.stringify(data));
     } catch (e) {
       console.error('Failed to save to localStorage', e);
     }
 
-    // Do not echo remote updates received from Firestore back to Firestore
+    // Do not echo remote updates back to Firestore
     if (isRemoteSync.current) {
       isRemoteSync.current = false;
       return;
     }
 
-    // Do not sync until initial cloud load has completed
     if (!isInitialCloudLoaded.current) {
       return;
     }
@@ -113,24 +148,68 @@ export function MandalProvider({ children }) {
     const config = getSavedFirebaseConfig();
     if (config) {
       setCloudSyncStatus('syncing');
-      syncToCloudSociety('shakti-yuvak-mandal', data)
+      syncToCloudSociety(currentSocietyId, data)
         .then(() => setCloudSyncStatus('synced'))
         .catch(() => setCloudSyncStatus('error'));
     }
-  }, [data]);
+  }, [data, currentSocietyId]);
+
+  // Authentication Handlers
+  const login = async (identifier, password) => {
+    const res = await loginSocietyUser({ identifier, password });
+    setAuthSession(res.user);
+    const loaded = loadInitialSocietyData(res.societyId, res.societyName);
+    setData(loaded);
+    // CRITICAL: Normal members & users log in with public read-only view.
+    // Admin must explicitly enter the 4-digit PIN to perform modifications.
+    setIsAdmin(false);
+    return res;
+  };
+
+  const signup = async (signupData) => {
+    const res = await registerSocietyUser(signupData);
+    setAuthSession(res.user);
+    const loaded = loadInitialSocietyData(res.societyId, res.societyName);
+    setData(loaded);
+    // User lands in public view; Admin PIN required for editing
+    setIsAdmin(false);
+    return res;
+  };
+
+  const forgotPassword = async (emailOrMobile) => {
+    return await sendResetPasswordEmail(emailOrMobile);
+  };
+
+  const verifyAccount = async (identifier) => {
+    return await verifyAccountForReset(identifier);
+  };
+
+  const resetPasswordWithPin = async (params) => {
+    return await resetSocietyPasswordDirectly(params);
+  };
+
+  const logout = async () => {
+    await logoutSocietyUser();
+    setAuthSession(null);
+    setIsAdmin(false);
+    setCurrentView('dashboard');
+    setData(CLEAN_DATA);
+  };
 
   const connectCloudDatabase = (config) => {
     saveFirebaseConfig(config);
-    setCloudSyncStatus('syncing');
-    syncToCloudSociety('shakti-yuvak-mandal', data)
-      .then(() => {
-        setIsCloudConnected(true);
-        setCloudSyncStatus('synced');
-      })
-      .catch((err) => {
-        console.error('Cloud connect error:', err);
-        setCloudSyncStatus('error');
-      });
+    if (currentSocietyId) {
+      setCloudSyncStatus('syncing');
+      syncToCloudSociety(currentSocietyId, data)
+        .then(() => {
+          setIsCloudConnected(true);
+          setCloudSyncStatus('synced');
+        })
+        .catch((err) => {
+          console.error('Cloud connect error:', err);
+          setCloudSyncStatus('error');
+        });
+    }
   };
 
   const disconnectCloudDatabase = () => {
@@ -174,7 +253,8 @@ export function MandalProvider({ children }) {
     setSelectedEventId('');
     setCurrentView('dashboard');
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(CLEAN_DATA));
+      const storageKey = getSocietyStorageKey(currentSocietyId);
+      localStorage.setItem(storageKey, JSON.stringify(CLEAN_DATA));
     } catch (_) {}
   };
 
@@ -185,11 +265,12 @@ export function MandalProvider({ children }) {
       setSelectedEventId(DEMO_DATA.events[0].id);
     }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEMO_DATA));
+      const storageKey = getSocietyStorageKey(currentSocietyId);
+      localStorage.setItem(storageKey, JSON.stringify(DEMO_DATA));
     } catch (_) {}
   };
 
-  // SOCIETY UPDATE (Name, Subtitle, UPI, PIN, Treasury)
+  // SOCIETY UPDATE (Name, Subtitle, Admin Contact, UPI, PIN, Treasury, Wizard Flag)
   const updateSociety = (updatedFields) => {
     setData((prev) => {
       const bank = updatedFields.bankBalance !== undefined ? Number(updatedFields.bankBalance) : prev.society.treasury.bankBalance;
@@ -201,8 +282,12 @@ export function MandalProvider({ children }) {
           ...prev.society,
           name: updatedFields.name !== undefined ? updatedFields.name : prev.society.name,
           subtitle: updatedFields.subtitle !== undefined ? updatedFields.subtitle : prev.society.subtitle,
+          adminName: updatedFields.adminName !== undefined ? updatedFields.adminName : prev.society.adminName,
+          adminMobile: updatedFields.adminMobile !== undefined ? updatedFields.adminMobile : prev.society.adminMobile,
+          adminEmail: updatedFields.adminEmail !== undefined ? updatedFields.adminEmail : prev.society.adminEmail,
           upiId: updatedFields.upiId !== undefined ? updatedFields.upiId : prev.society.upiId,
           adminPin: updatedFields.adminPin !== undefined ? updatedFields.adminPin : prev.society.adminPin,
+          wizardCompleted: updatedFields.wizardCompleted !== undefined ? updatedFields.wizardCompleted : (prev.society.wizardCompleted || false),
           treasury: {
             bankBalance: bank,
             cashBalance: cash,
@@ -797,6 +882,15 @@ export function MandalProvider({ children }) {
   return (
     <MandalContext.Provider
       value={{
+        authSession,
+        currentSocietyId,
+        isAuthenticated,
+        login,
+        signup,
+        forgotPassword,
+        verifyAccount,
+        resetPasswordWithPin,
+        logout,
         society,
         members,
         events,

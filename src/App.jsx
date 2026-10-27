@@ -5,11 +5,12 @@ import PwaBanner from './components/PwaBanner';
 import SocietyDashboard from './components/SocietyDashboard';
 import EventDetailView from './components/EventDetailView';
 import MembersTab from './components/MembersTab';
+import AuthPage from './components/AuthPage';
 
 // Modals
 import AdminPinModal from './components/AdminPinModal';
 import GetStartedWizardModal from './components/GetStartedWizardModal';
-import EditSocietyModal from './components/EditSocietyModal';
+import ProfileModal from './components/ProfileModal';
 import CreateEventModal from './components/CreateEventModal';
 import EditEventModal from './components/EditEventModal';
 import AddMemberModal from './components/AddMemberModal';
@@ -23,6 +24,7 @@ import { MessageSquare, FileDown } from 'lucide-react';
 
 function MandalAppContent() {
   const { 
+    isAuthenticated,
     currentView, 
     setCurrentView,
     selectedEvent, 
@@ -33,7 +35,7 @@ function MandalAppContent() {
   // Modals state
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isGetStartedOpen, setIsGetStartedOpen] = useState(false);
-  const [isSocietySettingsOpen, setIsSocietySettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   
   const [isCreateEventOpen, setIsCreateEventOpen] = useState(false);
   const [isEditEventOpen, setIsEditEventOpen] = useState(false);
@@ -52,6 +54,11 @@ function MandalAppContent() {
 
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportInitialTab, setExportInitialTab] = useState('whatsapp');
+
+  // If user is not logged in, show the centralized Login / Signup screen
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
 
   // Modal Triggers
   const handleSelectEvent = (eventId) => {
@@ -89,7 +96,8 @@ function MandalAppContent() {
       {/* 1. Header with Title, Corpus & View Switcher */}
       <Header
         onOpenAdminModal={() => setIsAdminModalOpen(true)}
-        onOpenSocietySettings={() => setIsSocietySettingsOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenSocietySettings={() => setIsProfileOpen(true)}
       />
 
       {/* 2. PWA Add to Home Screen Banner */}
@@ -102,7 +110,9 @@ function MandalAppContent() {
             onOpenCreateEvent={() => setIsCreateEventOpen(true)}
             onOpenEditEvent={handleOpenEditEvent}
             onOpenGetStarted={() => setIsGetStartedOpen(true)}
-            onOpenSocietySettings={() => setIsSocietySettingsOpen(true)}
+            onOpenProfile={() => setIsProfileOpen(true)}
+            onOpenSocietySettings={() => setIsProfileOpen(true)}
+            onOpenAdminModal={() => setIsAdminModalOpen(true)}
             onSelectEvent={handleSelectEvent}
           />
         ) : currentView === 'event' ? (
@@ -127,10 +137,10 @@ function MandalAppContent() {
         {/* Production Footer */}
         <footer style={{ textAlign: 'center', marginTop: '40px', paddingBottom: '30px' }}>
           <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)' }}>
-            🚩 Community Society Festival & Treasury Management
+            🚩 Centralized Society Festival & Treasury Management
           </div>
           <div style={{ fontSize: '10.5px', color: 'var(--text-light)', marginTop: '4px' }}>
-            Built for Complete Transparency & Audited Financial Records
+            Built for Complete Transparency & Audited Financial Records across all residential societies
           </div>
         </footer>
       </main>
@@ -169,9 +179,9 @@ function MandalAppContent() {
         onClose={() => setIsGetStartedOpen(false)}
       />
 
-      <EditSocietyModal
-        isOpen={isSocietySettingsOpen}
-        onClose={() => setIsSocietySettingsOpen(false)}
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
       />
 
       <CreateEventModal

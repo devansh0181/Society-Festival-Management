@@ -13,14 +13,18 @@ import {
   ArrowRight, 
   CheckCircle2, 
   Receipt,
-  Settings
+  User,
+  Settings,
+  Lock
 } from 'lucide-react';
 
 export default function SocietyDashboard({ 
   onOpenCreateEvent, 
   onOpenEditEvent, 
   onOpenGetStarted, 
+  onOpenProfile,
   onOpenSocietySettings, 
+  onOpenAdminModal,
   onSelectEvent 
 }) {
   const { 
@@ -30,7 +34,8 @@ export default function SocietyDashboard({
     isAdmin, 
     getOverallSocietyStats, 
     getEventStats, 
-    deleteEvent 
+    deleteEvent,
+    updateSociety 
   } = useMandal();
 
   const [filter, setFilter] = useState('all'); // all | active | completed
@@ -42,10 +47,17 @@ export default function SocietyDashboard({
     return evt.status === filter;
   });
 
+  // Wizard is permanently hidden once completed or dismissed
+  const isWizardDone = Boolean(
+    society?.wizardCompleted || 
+    (typeof window !== 'undefined' && localStorage.getItem(`setup_wizard_done_${society?.id}`) === 'true')
+  );
+  const shouldShowWizard = !isWizardDone && events.length === 0 && members.length === 0;
+
   return (
     <div id="society-dashboard-view">
       {/* 1. Get Started Banner for New/Empty Setup */}
-      {(events.length === 0 || members.length === 0) && (
+      {shouldShowWizard && (
         <div 
           style={{
             background: 'linear-gradient(135deg, #FFF7ED 0%, #FEF3C7 100%)',
@@ -58,9 +70,16 @@ export default function SocietyDashboard({
         >
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: '240px' }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#FFEDD5', color: 'var(--saffron-900)', padding: '3px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: 700, marginBottom: '6px' }}>
-                <Sparkles size={13} />
-                <span>Quick Setup Wizard</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#FFEDD5', color: 'var(--saffron-900)', padding: '3px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: 700 }}>
+                  <Sparkles size={13} />
+                  <span>Quick Setup Wizard</span>
+                </div>
+                {!isAdmin && (
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#991B1B', background: '#FEE2E2', padding: '2px 8px', borderRadius: '6px' }}>
+                    🔒 Admin Access Only
+                  </span>
+                )}
               </div>
               <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-dark)' }}>
                 Welcome to {society.name}!
@@ -70,25 +89,76 @@ export default function SocietyDashboard({
               </p>
             </div>
 
-            <button
-              id="btn-launch-setup-wizard"
-              className="action-btn"
-              onClick={onOpenGetStarted}
-              style={{
-                background: 'var(--saffron-900)',
-                color: '#FFF',
-                padding: '9px 18px',
-                fontSize: '13px',
-                fontWeight: 700,
-                borderRadius: '10px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              <span>Launch Setup Wizard</span>
-              <ArrowRight size={15} />
-            </button>
+            {isAdmin ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  id="btn-launch-setup-wizard"
+                  className="action-btn"
+                  onClick={onOpenGetStarted}
+                  style={{
+                    background: 'var(--saffron-900)',
+                    color: '#FFF',
+                    padding: '9px 18px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    borderRadius: '10px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <span>Launch Setup Wizard</span>
+                  <ArrowRight size={15} />
+                </button>
+
+                <button
+                  onClick={() => {
+                    updateSociety({ wizardCompleted: true });
+                    try {
+                      if (society?.id) localStorage.setItem(`setup_wizard_done_${society.id}`, 'true');
+                    } catch (_) {}
+                  }}
+                  style={{
+                    background: '#FFF',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer'
+                  }}
+                  title="Dismiss setup wizard"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : (
+              <button
+                id="btn-launch-setup-wizard-locked"
+                className="action-btn"
+                onClick={() => {
+                  alert("Admin Access Required: Only the society administrator can configure society setup. Please click 'Admin Login' in the top header and enter your 4-digit PIN.");
+                  if (onOpenAdminModal) onOpenAdminModal();
+                }}
+                style={{
+                  background: '#94A3B8',
+                  color: '#FFF',
+                  padding: '9px 18px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  borderRadius: '10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer'
+                }}
+                title="Admin PIN required to configure society setup"
+              >
+                <Lock size={15} />
+                <span>Admin Only (Unlock PIN)</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -108,7 +178,7 @@ export default function SocietyDashboard({
 
           {isAdmin && (
             <button
-              onClick={onOpenSocietySettings}
+              onClick={onOpenProfile || onOpenSocietySettings}
               style={{
                 background: '#FFF',
                 border: '1px solid var(--border-medium)',
@@ -122,10 +192,10 @@ export default function SocietyDashboard({
                 gap: '5px',
                 fontWeight: 600
               }}
-              title="Edit Society Name, Opening Treasury, UPI ID"
+              title="Edit Society Name, Opening Treasury, UPI ID & Contacts"
             >
-              <Settings size={13} color="var(--saffron-900)" />
-              <span>Society Settings</span>
+              <User size={13} color="var(--saffron-900)" />
+              <span>Society Profile</span>
             </button>
           )}
         </div>

@@ -4,12 +4,13 @@
 export const CLEAN_DATA = {
   society: {
     id: 'society-1',
-    name: 'Shakti Yuvak Mandal',
+    name: 'My Residential Society',
     subtitle: 'Residential Society Welfare & Festivals',
     tagline: 'Satya, Seva aur Samarpan',
     location: 'Society Campus',
-    upiId: 'shaktimandal@upi',
+    upiId: '',
     adminPin: '1234',
+    wizardCompleted: false,
     treasury: {
       bankBalance: 0,
       cashBalance: 0,
