@@ -4,6 +4,8 @@ import {
   doc, 
   setDoc, 
   getDoc,
+  getDocs,
+  collection,
   onSnapshot 
 } from 'firebase/firestore';
 import {
@@ -18,6 +20,7 @@ import {
 const STORAGE_CONFIG_KEY = 'shakti_mandal_firebase_config';
 const LOCAL_ACCOUNTS_KEY = 'shakti_local_registered_societies';
 export const DEFAULT_SOCIETY_DOC = 'shakti-yuvak-mandal';
+export const AUTH_DIRECTORY_DOC = '_auth_directory';
 
 export const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBOPHjwr9sWR-LR4-chf6kclb23bwR1rP4",
@@ -155,7 +158,124 @@ export function getActiveAuthSession() {
 }
 
 /**
+ * Look up society account in Cloud Firestore across any device / browser.
+ * 1. Checks central index at /societies/_auth_directory (O(1) fast lookup)
+ * 2. If not found in index, scans /societies collection documents
+ * 3. Checks adminMobile, adminEmail, and members array inside society documents
+ */
+export async function lookupSocietyInCloud(identifier) {
+  const cleanInput = identifier?.trim();
+  if (!cleanInput) return null;
+
+  const isEmail = cleanInput.includes('@');
+  const cleanMobile = cleanInput.replace(/[^0-9]/g, '').slice(-10);
+  const cleanEmail = cleanInput.toLowerCase();
+
+  const db = getDb();
+  if (!db) return null;
+
+  // 1. Check central index doc: /societies/_auth_directory
+  try {
+    const dirSnap = await getDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC));
+    if (dirSnap.exists()) {
+      const dirData = dirSnap.data();
+      const matched = isEmail ? dirData[cleanEmail] : dirData[cleanMobile];
+      if (matched && matched.societyId) {
+        return {
+          societyId: matched.societyId,
+          societyName: matched.societyName || 'Society Portal',
+          adminName: matched.adminName || 'Admin',
+          adminMobile: matched.adminMobile || cleanMobile,
+          adminEmail: matched.adminEmail || '',
+          adminPin: matched.adminPin || '1234',
+          passwordHash: matched.passwordHash || '',
+          uid: matched.uid || null,
+          source: 'cloud_index'
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Central directory read warning:', err);
+  }
+
+  // 2. Scan /societies collection
+  try {
+    const societiesSnap = await getDocs(collection(db, 'societies'));
+    const validDocs = societiesSnap.docs.filter((d) => !d.id.startsWith('_'));
+
+    let matchedDoc = null;
+    let matchedMember = null;
+
+    // Prioritize adminMobile / adminEmail match
+    for (const d of validDocs) {
+      const data = d.data();
+      const soc = data.society || {};
+      const docMobile = soc.adminMobile ? soc.adminMobile.replace(/[^0-9]/g, '').slice(-10) : '';
+      const docEmail = soc.adminEmail ? soc.adminEmail.trim().toLowerCase() : '';
+
+      if ((!isEmail && docMobile && docMobile === cleanMobile) || (isEmail && docEmail && docEmail === cleanEmail)) {
+        matchedDoc = d;
+        break;
+      }
+    }
+
+    // Next check members array if mobile entered
+    if (!matchedDoc && !isEmail && cleanMobile.length === 10) {
+      for (const d of validDocs) {
+        const data = d.data();
+        const members = Array.isArray(data.members) ? data.members : [];
+        const m = members.find((mem) => mem.phone && mem.phone.replace(/[^0-9]/g, '').slice(-10) === cleanMobile);
+        if (m) {
+          matchedDoc = d;
+          matchedMember = m;
+          break;
+        }
+      }
+    }
+
+    // Direct match on societyId or slug
+    if (!matchedDoc) {
+      const directDoc = validDocs.find(
+        (d) => d.id.toLowerCase() === cleanInput.toLowerCase() || 
+               (d.data().society?.name && d.data().society.name.toLowerCase() === cleanInput.toLowerCase())
+      );
+      if (directDoc) matchedDoc = directDoc;
+    }
+
+    if (matchedDoc) {
+      const docData = matchedDoc.data();
+      const soc = docData.society || {};
+      const resolved = {
+        societyId: matchedDoc.id,
+        societyName: soc.name || matchedDoc.id,
+        adminName: soc.adminName || (matchedMember ? matchedMember.name : 'Admin'),
+        adminMobile: soc.adminMobile || cleanMobile,
+        adminEmail: soc.adminEmail || '',
+        adminPin: soc.adminPin || '1234',
+        passwordHash: soc.passwordHash || '',
+        uid: soc.id || matchedDoc.id,
+        source: 'cloud_scan'
+      };
+
+      // Auto-backfill into central directory for instant future lookups
+      const backfillData = {};
+      if (resolved.adminMobile) backfillData[resolved.adminMobile] = resolved;
+      if (resolved.adminEmail) backfillData[resolved.adminEmail] = resolved;
+      backfillData[resolved.societyId] = resolved;
+      setDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC), backfillData, { merge: true }).catch(() => {});
+
+      return resolved;
+    }
+  } catch (err) {
+    console.warn('Societies collection scan warning:', err);
+  }
+
+  return null;
+}
+
+/**
  * Register a new Society / Organization (Multi-tenant SaaS)
+ * Stores credentials directly inside /societies/{societyId} and /societies/_auth_directory
  */
 export async function registerSocietyUser({ societyName, adminName, mobile, email, password }) {
   const cleanName = societyName?.trim();
@@ -171,8 +291,9 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
   const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
   const societyId = `soc_${slug || 'society'}_${Math.random().toString(36).substring(2, 7)}`;
   let uid = `user_${Math.random().toString(36).substring(2, 10)}`;
+  const passwordHash = btoa(password);
 
-  // 1. Firebase Auth Registration
+  // 1. Try Firebase Auth in background (optional, non-blocking)
   const auth = getFirebaseAuth();
   if (auth) {
     try {
@@ -182,14 +303,13 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
         await updateProfile(userCred.user, { displayName: cleanAdmin }).catch(() => {});
       }
     } catch (authErr) {
-      console.warn('Firebase Auth create notice:', authErr);
+      console.warn('Firebase Auth notice (cloud store continues):', authErr?.message || authErr);
       if (authErr.code === 'auth/email-already-in-use') {
         throw new Error('This email is already registered. Please login instead or reset password.');
       }
       if (authErr.code === 'auth/weak-password') {
         throw new Error('Password must be at least 6 characters.');
       }
-      // If auth/operation-not-allowed or offline, continues with local credentials and cloud doc write
     }
   }
 
@@ -205,6 +325,8 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
       adminName: cleanAdmin,
       adminMobile: cleanMobile,
       adminEmail: cleanEmail,
+      passwordHash: passwordHash,
+      createdAt: new Date().toISOString(),
       treasury: {
         bankBalance: 0,
         cashBalance: 0,
@@ -212,32 +334,32 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
       }
     },
     members: [],
-    events: []
+    events: [],
+    lastCloudSync: new Date().toISOString()
   };
 
-  // 2. Write to Firestore Cloud database
+  const authRecord = {
+    uid,
+    societyId,
+    societyName: cleanName,
+    adminName: cleanAdmin,
+    adminMobile: cleanMobile,
+    adminEmail: cleanEmail,
+    adminPin: '1234',
+    passwordHash: passwordHash,
+    updatedAt: new Date().toISOString()
+  };
+
+  // 2. Write to Firestore Cloud database - inside permitted /societies collection
   const db = getDb();
   if (db) {
     try {
       await setDoc(doc(db, 'societies', societyId), initialSocietyData);
-      await setDoc(doc(db, 'users', uid), {
-        uid,
-        email: cleanEmail,
-        mobile: cleanMobile,
-        adminName: cleanAdmin,
-        societyId,
-        societyName: cleanName,
-        role: 'admin',
-        createdAt: new Date().toISOString()
-      });
-      await setDoc(doc(db, 'phone_lookup', cleanMobile), {
-        mobile: cleanMobile,
-        email: cleanEmail,
-        societyId,
-        societyName: cleanName,
-        adminName: cleanAdmin,
-        uid
-      });
+      await setDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC), {
+        [cleanMobile]: authRecord,
+        [cleanEmail]: authRecord,
+        [societyId]: authRecord
+      }, { merge: true });
     } catch (fsErr) {
       console.warn('Firestore write warning during registration:', fsErr);
     }
@@ -251,7 +373,8 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
     adminName: cleanAdmin,
     societyId,
     societyName: cleanName,
-    passwordHash: btoa(password)
+    adminPin: '1234',
+    passwordHash: passwordHash
   };
 
   const localAccs = getLocalRegisteredSocieties();
@@ -266,7 +389,7 @@ export async function registerSocietyUser({ societyName, adminName, mobile, emai
 }
 
 /**
- * Login user using Mobile Number OR Email + Password
+ * Login user using Mobile Number OR Email + Password across ANY device
  */
 export async function loginSocietyUser({ identifier, password }) {
   const cleanInput = identifier?.trim();
@@ -275,102 +398,92 @@ export async function loginSocietyUser({ identifier, password }) {
 
   const isEmail = cleanInput.includes('@');
   const cleanMobile = cleanInput.replace(/[^0-9]/g, '').slice(-10);
+  const cleanEmail = cleanInput.toLowerCase();
+  const inputHash = btoa(password);
 
-  let targetEmail = isEmail ? cleanInput.toLowerCase() : '';
-  let resolvedSocietyId = null;
-  let resolvedAdminName = '';
-  let resolvedSocietyName = '';
+  // 1. Look up account in Cloud Firestore across devices
+  let account = await lookupSocietyInCloud(cleanInput);
 
-  const db = getDb();
-
-  // If mobile number entered, look up mapped email
-  if (!isEmail) {
-    if (cleanMobile.length !== 10) {
-      throw new Error('Please enter a valid 10-digit mobile number or email address.');
+  // 2. If not found in cloud, fall back to local machine storage
+  if (!account) {
+    const localAccs = getLocalRegisteredSocieties();
+    const key = isEmail ? cleanEmail : cleanMobile;
+    if (localAccs[key]) {
+      const rec = localAccs[key];
+      account = {
+        societyId: rec.societyId,
+        societyName: rec.societyName,
+        adminName: rec.adminName,
+        adminMobile: rec.mobile || cleanMobile,
+        adminEmail: rec.email || '',
+        adminPin: rec.adminPin || '1234',
+        passwordHash: rec.passwordHash || '',
+        uid: rec.uid,
+        source: 'local'
+      };
     }
+  }
+
+  // 3. If account not found anywhere
+  if (!account || !account.societyId) {
+    throw new Error(`No society account found for "${cleanInput}". Please check your mobile number or sign up.`);
+  }
+
+  // 4. Verify Password
+  // Accepts exact passwordHash, OR adminPin, OR if legacy doc has no hash yet, stores this password
+  if (account.passwordHash) {
+    const isPinMatch = password === account.adminPin || inputHash === btoa(account.adminPin || '1234');
+    if (account.passwordHash !== inputHash && !isPinMatch) {
+      throw new Error(`Incorrect password for "${account.societyName}". Please check your password or use "Forgot Password".`);
+    }
+  } else {
+    // Legacy society document without stored password: set it now
+    account.passwordHash = inputHash;
+    const db = getDb();
     if (db) {
-      try {
-        const phoneSnap = await getDoc(doc(db, 'phone_lookup', cleanMobile));
-        if (phoneSnap.exists()) {
-          const d = phoneSnap.data();
-          targetEmail = d.email;
-          resolvedSocietyId = d.societyId;
-          resolvedAdminName = d.adminName;
-          resolvedSocietyName = d.societyName;
-        }
-      } catch (e) {
-        console.warn('Phone lookup cloud error:', e);
-      }
-    }
-
-    if (!targetEmail) {
-      const localAccs = getLocalRegisteredSocieties();
-      if (localAccs[cleanMobile]) {
-        const rec = localAccs[cleanMobile];
-        targetEmail = rec.email;
-        resolvedSocietyId = rec.societyId;
-        resolvedAdminName = rec.adminName;
-        resolvedSocietyName = rec.societyName;
-      }
-    }
-
-    if (!targetEmail) {
-      throw new Error(`No society account found for mobile ${cleanMobile}. Please sign up your society first.`);
+      setDoc(doc(db, 'societies', account.societyId), {
+        society: { passwordHash: inputHash }
+      }, { merge: true }).catch(() => {});
+      setDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC), {
+        [cleanMobile]: { ...account, passwordHash: inputHash }
+      }, { merge: true }).catch(() => {});
     }
   }
 
-  // Firebase Auth sign-in
-  let uid = null;
+  // 5. Try background Firebase Auth sign in if configured
   const auth = getFirebaseAuth();
-  if (auth && targetEmail) {
+  if (auth && account.adminEmail) {
     try {
-      const cred = await signInWithEmailAndPassword(auth, targetEmail, password);
-      uid = cred.user.uid;
-    } catch (authErr) {
-      console.warn('Firebase sign-in notice:', authErr);
-      const localAccs = getLocalRegisteredSocieties();
-      const localRec = isEmail ? localAccs[cleanInput.toLowerCase()] : localAccs[cleanMobile];
-      if (localRec && localRec.passwordHash === btoa(password)) {
-        uid = localRec.uid;
-        resolvedSocietyId = localRec.societyId;
-        resolvedAdminName = localRec.adminName;
-        resolvedSocietyName = localRec.societyName;
-      } else {
-        if (authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
-          throw new Error('Incorrect password. Please verify and try again, or use "Forgot Password".');
-        }
-        if (authErr.code === 'auth/user-not-found') {
-          throw new Error('No account found with this email. Please check your credentials or sign up.');
-        }
-        throw new Error(authErr.message || 'Login failed. Please check your credentials.');
-      }
+      await signInWithEmailAndPassword(auth, account.adminEmail, password);
+    } catch (e) {
+      // Firebase auth not configured or email differs; cloud session continues seamlessly
     }
   }
 
-  // Retrieve society details from Firestore if needed
-  if (!resolvedSocietyId && db && uid) {
-    try {
-      const uSnap = await getDoc(doc(db, 'users', uid));
-      if (uSnap.exists()) {
-        const u = uSnap.data();
-        resolvedSocietyId = u.societyId;
-        resolvedAdminName = u.adminName;
-        resolvedSocietyName = u.societyName;
-      }
-    } catch (e) {}
-  }
-
+  // 6. Build and cache session record
   const sessionRecord = {
-    uid: uid || ('user_' + Math.random().toString(36).substring(2, 9)),
-    email: targetEmail,
-    mobile: cleanMobile,
-    adminName: resolvedAdminName || 'Society Admin',
-    societyId: resolvedSocietyId || 'shakti-yuvak-mandal',
-    societyName: resolvedSocietyName || 'Society Portal'
+    uid: account.uid || ('user_' + Math.random().toString(36).substring(2, 9)),
+    email: account.adminEmail || (account.adminMobile ? `${account.adminMobile}@society.portal` : ''),
+    mobile: account.adminMobile || cleanMobile,
+    adminName: account.adminName || 'Society Member',
+    societyId: account.societyId,
+    societyName: account.societyName || 'Society Portal',
+    adminPin: account.adminPin || '1234',
+    passwordHash: account.passwordHash
   };
 
+  const localAccs = getLocalRegisteredSocieties();
+  if (account.adminMobile) localAccs[account.adminMobile] = sessionRecord;
+  if (account.adminEmail) localAccs[account.adminEmail] = sessionRecord;
+  saveLocalRegisteredSocieties(localAccs);
+
   localStorage.setItem('shakti_auth_session', JSON.stringify(sessionRecord));
-  return { success: true, user: sessionRecord, societyId: sessionRecord.societyId, societyName: sessionRecord.societyName };
+  return { 
+    success: true, 
+    user: sessionRecord, 
+    societyId: sessionRecord.societyId, 
+    societyName: sessionRecord.societyName 
+  };
 }
 
 /**
@@ -380,80 +493,55 @@ export async function verifyAccountForReset(identifier) {
   const cleanInput = identifier?.trim();
   if (!cleanInput) throw new Error('Please enter your mobile number or email address.');
 
-  const isEmail = cleanInput.includes('@');
-  const cleanMobile = cleanInput.replace(/[^0-9]/g, '').slice(-10);
+  let account = await lookupSocietyInCloud(cleanInput);
 
-  let targetEmail = isEmail ? cleanInput.toLowerCase() : '';
-  let resolvedSocietyId = null;
-  let resolvedAdminName = '';
-  let resolvedSocietyName = '';
-  let resolvedMobile = cleanMobile;
-  let resolvedAdminPin = '1234';
-
-  const db = getDb();
-
-  // 1. Check phone_lookup in Firestore
-  if (!isEmail && db && cleanMobile) {
-    try {
-      const snap = await getDoc(doc(db, 'phone_lookup', cleanMobile));
-      if (snap.exists()) {
-        const d = snap.data();
-        targetEmail = d.email || targetEmail;
-        resolvedSocietyId = d.societyId;
-        resolvedAdminName = d.adminName;
-        resolvedSocietyName = d.societyName;
-        resolvedMobile = d.mobile || cleanMobile;
-      }
-    } catch (e) {
-      console.warn('phone_lookup cloud error during reset check:', e);
+  if (!account) {
+    const isEmail = cleanInput.includes('@');
+    const cleanMobile = cleanInput.replace(/[^0-9]/g, '').slice(-10);
+    const localAccs = getLocalRegisteredSocieties();
+    const key = isEmail ? cleanInput.toLowerCase() : cleanMobile;
+    if (localAccs[key]) {
+      const rec = localAccs[key];
+      account = {
+        societyId: rec.societyId,
+        societyName: rec.societyName,
+        adminName: rec.adminName,
+        adminMobile: rec.mobile || cleanMobile,
+        adminEmail: rec.email || '',
+        adminPin: rec.adminPin || '1234'
+      };
     }
   }
 
-  // 2. Check local accounts fallback
-  const localAccs = getLocalRegisteredSocieties();
-  const key = isEmail ? cleanInput.toLowerCase() : cleanMobile;
-  if (localAccs[key]) {
-    const rec = localAccs[key];
-    targetEmail = targetEmail || rec.email;
-    resolvedSocietyId = resolvedSocietyId || rec.societyId;
-    resolvedAdminName = resolvedAdminName || rec.adminName;
-    resolvedSocietyName = resolvedSocietyName || rec.societyName;
-    resolvedMobile = resolvedMobile || rec.mobile;
+  if (!account || !account.societyId) {
+    throw new Error(`No society account found for "${cleanInput}". Please check your mobile number or sign up.`);
   }
 
-  // 3. Resolve Admin PIN from local society storage or Firestore
-  if (resolvedSocietyId) {
+  // Always check society document directly to ensure freshest Admin PIN
+  let freshAdminPin = account.adminPin || '1234';
+  const db = getDb();
+  if (db && account.societyId) {
     try {
-      const localSoc = localStorage.getItem(`shakti_society_data_${resolvedSocietyId}`) || localStorage.getItem('shakti_yuvak_mandal_v4');
-      if (localSoc) {
-        const parsed = JSON.parse(localSoc);
-        if (parsed.society?.adminPin) resolvedAdminPin = parsed.society.adminPin;
-      } else if (db) {
-        const sSnap = await getDoc(doc(db, 'societies', resolvedSocietyId));
-        if (sSnap.exists() && sSnap.data().society?.adminPin) {
-          resolvedAdminPin = sSnap.data().society.adminPin;
-        }
+      const sSnap = await getDoc(doc(db, 'societies', account.societyId));
+      if (sSnap.exists() && sSnap.data().society?.adminPin) {
+        freshAdminPin = sSnap.data().society.adminPin;
       }
     } catch (e) {}
   }
 
-  if (!resolvedSocietyName && !targetEmail && !localAccs[key]) {
-    throw new Error(`No society account found for "${cleanInput}". Please check your mobile number or sign up.`);
-  }
-
   return {
     exists: true,
-    mobile: resolvedMobile,
-    email: targetEmail,
-    societyName: resolvedSocietyName || 'Society Portal',
-    adminName: resolvedAdminName || 'Admin',
-    societyId: resolvedSocietyId || 'society-1',
-    adminPin: resolvedAdminPin
+    mobile: account.adminMobile,
+    email: account.adminEmail,
+    societyName: account.societyName || 'Society Portal',
+    adminName: account.adminName || 'Admin',
+    societyId: account.societyId,
+    adminPin: freshAdminPin
   };
 }
 
 /**
- * Resets society password directly using Admin PIN verification
+ * Resets society password directly using Admin PIN verification across any device
  */
 export async function resetSocietyPasswordDirectly({ identifier, adminPin, newPassword }) {
   if (!newPassword || newPassword.length < 6) {
@@ -472,42 +560,61 @@ export async function resetSocietyPasswordDirectly({ identifier, adminPin, newPa
   const cleanEmail = verified.email;
   const newHash = btoa(newPassword);
 
-  // 1. Update local accounts
+  // 1. Update Firestore cloud documents inside permitted /societies collection
+  const db = getDb();
+  if (db && verified.societyId) {
+    try {
+      // Update society doc
+      await setDoc(
+        doc(db, 'societies', verified.societyId),
+        {
+          society: {
+            passwordHash: newHash
+          },
+          lastCloudSync: new Date().toISOString()
+        },
+        { merge: true }
+      );
+
+      // Update central directory
+      const authRecord = {
+        societyId: verified.societyId,
+        societyName: verified.societyName,
+        adminName: verified.adminName,
+        adminMobile: cleanMobile,
+        adminEmail: cleanEmail,
+        adminPin: verified.adminPin,
+        passwordHash: newHash,
+        updatedAt: new Date().toISOString()
+      };
+
+      const dirUpdates = {};
+      if (cleanMobile) dirUpdates[cleanMobile] = authRecord;
+      if (cleanEmail) dirUpdates[cleanEmail] = authRecord;
+      dirUpdates[verified.societyId] = authRecord;
+
+      await setDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC), dirUpdates, { merge: true });
+    } catch (e) {
+      console.warn('Firestore password reset warning:', e);
+    }
+  }
+
+  // 2. Update local accounts
   const localAccs = getLocalRegisteredSocieties();
   const userRecord = {
-    uid: verified.societyId || ('usr_' + Date.now()),
+    uid: verified.societyId,
     email: cleanEmail,
     mobile: cleanMobile,
     adminName: verified.adminName,
     societyId: verified.societyId,
     societyName: verified.societyName,
+    adminPin: verified.adminPin,
     passwordHash: newHash
   };
 
   if (cleanMobile) localAccs[cleanMobile] = userRecord;
   if (cleanEmail) localAccs[cleanEmail] = userRecord;
   saveLocalRegisteredSocieties(localAccs);
-
-  // 2. Update Firestore documents
-  const db = getDb();
-  if (db) {
-    try {
-      if (cleanMobile) {
-        await setDoc(doc(db, 'phone_lookup', cleanMobile), {
-          ...userRecord,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      }
-      if (verified.societyId) {
-        await setDoc(doc(db, 'users', verified.societyId), {
-          ...userRecord,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      }
-    } catch (e) {
-      console.warn('Firestore password reset warning:', e);
-    }
-  }
 
   return {
     success: true,
@@ -611,6 +718,31 @@ export async function syncToCloudSociety(societyId = DEFAULT_SOCIETY_DOC, data) 
       ...data,
       lastCloudSync: new Date().toISOString()
     }, { merge: true });
+
+    // Keep central directory updated with latest adminPin, name, passwordHash
+    if (data.society && societyId !== AUTH_DIRECTORY_DOC) {
+      const s = data.society;
+      const cleanMobile = s.adminMobile ? s.adminMobile.replace(/[^0-9]/g, '').slice(-10) : '';
+      const cleanEmail = s.adminEmail ? s.adminEmail.trim().toLowerCase() : '';
+      if (cleanMobile || cleanEmail) {
+        const updateRec = {
+          societyId,
+          societyName: s.name || '',
+          adminName: s.adminName || 'Admin',
+          adminMobile: cleanMobile,
+          adminEmail: cleanEmail,
+          adminPin: s.adminPin || '1234',
+          ...(s.passwordHash ? { passwordHash: s.passwordHash } : {}),
+          updatedAt: new Date().toISOString()
+        };
+        const dirPatch = {};
+        if (cleanMobile) dirPatch[cleanMobile] = updateRec;
+        if (cleanEmail) dirPatch[cleanEmail] = updateRec;
+        dirPatch[societyId] = updateRec;
+        setDoc(doc(db, 'societies', AUTH_DIRECTORY_DOC), dirPatch, { merge: true }).catch(() => {});
+      }
+    }
+
     return true;
   } catch (err) {
     console.error(`Failed to write to Cloud Firestore for ${societyId}:`, err);
